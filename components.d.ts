@@ -19,5 +19,6 @@ declare module '@vue/runtime-core' {
     NForm: typeof import('naive-ui')['NForm']
     NInput: typeof import('naive-ui')['NInput']
     NSpace: typeof import('naive-ui')['NSpace']
+    NTimePicker: typeof import('naive-ui')['NTimePicker']
   }
 }
