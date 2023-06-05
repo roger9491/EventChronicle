@@ -29,6 +29,8 @@ export default defineConfig({
     clearScreen: false,
     server: {
       strictPort: true,
+      host: '127.0.0.1', 
+      port: 3000,
     },
     // to make use of `TAURI_PLATFORM`, `TAURI_ARCH`, `TAURI_FAMILY`,
     // `TAURI_PLATFORM_VERSION`, `TAURI_PLATFORM_TYPE` and `TAURI_DEBUG`

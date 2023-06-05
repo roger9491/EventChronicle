@@ -12,15 +12,17 @@
       <n-time-picker v-model:value="formEndTime" />
       <n-date-picker v-model:value="formEventDate" type="date" />
     </n-form>
+
     <n-button round type="primary" @click="formButton(formTitle, formStartTime, formEndTime, formEventDate)">
       送出
     </n-button>
+
 
     <n-calendar v-model:value="value">
       <template v-slot:default="{ year, month, date }">
         <template v-if="isHaveEvent(year, month, date)">
           <div v-for="event in eventDataObject[year][month][date]">
-            <div> {{ event.title }}</div>
+            <div> {{ event.title }} {{ getEventDuration(event) }}</div>
           </div>
         </template>
       </template>
@@ -31,6 +33,7 @@
 <script lang="ts">
 // invoke 調用 rust函式
 import { invoke } from '@tauri-apps/api/tauri';
+import { useMessage } from 'naive-ui';
 import { reactive } from 'vue';
 
 export default {
@@ -58,8 +61,8 @@ export default {
           }
         },
       }),
-      key: 0
-
+      key: 0,
+      message: useMessage(),  // 彈出訊息組件
     }
   },
   created() {
@@ -79,6 +82,8 @@ export default {
         // 獲取到的原始數據添加進頁面數據結構
         for (let event of jsonData) {
           this.originAddEventDataObject(event.startTime, event.endTime, event.title);
+          // 事件加入 提式標籤
+          this.addEventNameToAutocompleteList(event.title)
         }
 
 
@@ -131,49 +136,70 @@ export default {
         endDateTmp.getSeconds(),
         endDateTmp.getMilliseconds()
       )
+      // 獲取時間戳
+      let finalStartTimeStamp = finalStartDateTmp.getTime()
+      let finalEndTimeStamp = finalEndDateTmp.getTime()
+      // 驗證結束時間晚於起始時間
+      if (finalStartTimeStamp >= finalEndTimeStamp) {
+        this.message.error("起始時間要早於結束時間")
+        return
+      }
+
+      // 取出年月日
+      let year = finalEndDateTmp.getFullYear()
+      let month = finalEndDateTmp.getMonth() + 1
+      let date = finalEndDateTmp.getDate()
+
+      // 初始化對象
+      if (!this.eventDataObject[year]) {
+        this.eventDataObject[year] = {}
+      }
+      if (!this.eventDataObject[year][month]) {
+        this.eventDataObject[year][month] = {}
+      }
 
 
+      console.log("if (this.eventDataObject[finalEndDateTmp.getFullYear()][")
+      console.log(this.eventDataObject)
       //驗證事件時間有沒有重複
+      // 如果當天日期已經有事件 需要驗證
+      if (date in this.eventDataObject[year][month]) {
+        if (this.checkEventTimeDuplication(
+          finalStartTimeStamp, finalEndTimeStamp) == false) {
+          // 驗證不過 
+          this.message.error("時間重疊")
+          return
+        }
+      }
 
 
+      // 原始數據格式並添加到 eventDataObject
+      this.originAddEventDataObject(finalStartTimeStamp, finalEndTimeStamp, title)
 
-      // recordEvent()
+      this.recordEvent(finalStartTimeStamp, finalEndTimeStamp, title)
+
+      // 事件加入提示標籤
+      this.addEventNameToAutocompleteList(title)
+      // 清空表單
+      this.initializeForm()
     },
     /* 
       紀錄事件
       1. 該變當前頁面數據
       2. 發送數據給rust並記錄成json格式
     */
-    recordEvent(start: Number, end: number, t: string, eventDate: number) {
-      console.log("recordEvent", eventDate)
-      // 驗證時間有沒有重複
-
-
-
-      // 該變當前頁面數據
-      // eventDataObject 添加數據
-      // this.originAddEventDataObject(start, end, t)
-      console.log("recordEvent eventDataObject", this.eventDataObject);
-
+    recordEvent(start: Number, end: number, t: string) {
       let obj = {
         startTime: start,
         endTime: end,
         title: t,
       }
       let s = JSON.stringify(obj)
-
-      // test
-      console.log(s)
-
       // 呼叫 rust api
       // 持久化事件到文件
       invoke('EventStoreToFile', { dataJson: s }).then(response => {
         console.log(response) // logs "a response from Rust"
       })
-
-
-
-
     },
     getCurrentTimeWithZeroSeconds(): string {
       const now = new Date();
@@ -239,49 +265,94 @@ export default {
     initializeForm() {
       // 初始化日期為當前
       this.formEventDate = Date.now();
+      // 初始化開始結束時間
+      this.formStartTime = 0
+      this.formEndTime = 0
       // 清空輸入框
-      this.formTitle;
+      this.formTitle = "";
     },
     /* 
       前提是必須確保當 年 月 日 有其值
     */
     // 檢查紀錄的時間是否有重複到
-    checkEventTimeDuplication(
-      year: number, 
-      month: number,
-      date: number,
-      startTimestamp: number,
-      endTimestamp: number,
-      event: string) {
+    checkEventTimeDuplication(startTimestamp: number, endTimestamp: number): boolean {
+
+      let dateTmp = new Date(startTimestamp)
+      let year = dateTmp.getFullYear()
+      let month = dateTmp.getMonth() + 1
+      let date = dateTmp.getDate()
 
       // 排序事件
       this.eventDataObject[year][month][date].sort(this.compareByTimeStamp)
 
 
       // 檢查 開始結束 時間是否有重疊
-      let flag = true; 
-      for (let eventInfo of this.eventDataObject[year][month][date]){
-        
+      let flag = false;
+      if (this.eventDataObject[year][month][date].length == 1) {
+        if (this.eventDataObject[year][month][date][0].startTime >= endTimestamp
+          || this.eventDataObject[year][month][date][0].endTime <= startTimestamp) {
+          flag = true;
+        }
+      } else {
+        this.eventDataObject[year][month][date].forEach((_, index) => {
+          if (index == 0) {
+            return
+          }
+          if (this.eventDataObject[year][month][date][index - 1].endTime <= startTimestamp &&
+            this.eventDataObject[year][month][date][index].startTime >= endTimestamp) {
+            flag = true;
+          }
+          // 跌代到最後一個
+          if (index == this.eventDataObject[year][month][date].length - 1) {
+            if (this.eventDataObject[year][month][date][index].endTime <= startTimestamp) {
+              flag = true;
+            }
+          }
+        })
       }
-
       if (flag) {
         return true
-      }else{
+      } else {
         return false
       }
 
     },
+
+    // 排序比較函式
     compareByTimeStamp(a: any, b: any) {
-      if (a.startTime > b.startTime){
+      if (a.startTime > b.startTime) {
         return 1;
       }
-      if (a.startTime == b.startTime){
-        if (a.endTime > b.endTime){
-          return 1;
-        }
+      if (a.startTime < b.startTime) {
+        return -1;
       }
-      return 0
-    }
+      // a.startTime == b.startTime
+      if (a.endTime > b.endTime) {
+        return 1;
+      }
+      if (a.endTime < b.endTime) {
+        return -1;
+      }
+      // a.endTime == b.endTime
+      return 0;
+    },
+
+    // 獲取事件經過的時間
+    getEventDuration(event: any) {
+      let diffent = event.endTime - event.startTime;
+
+      let diffentHour = diffent / (1000 * 60 * 60)
+
+      return diffentHour
+    },
+
+    addEventNameToAutocompleteList(title: string) {
+      if (!this.labelList.includes(title)) {
+        // 如果事件名稱不存在，將其添加到列表中
+        this.labelList.push(title);
+      }
+    },
+
   }
 }
 
